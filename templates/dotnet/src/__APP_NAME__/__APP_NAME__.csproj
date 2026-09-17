@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>__APP_NAME__</RootNamespace>
+    <AssemblyName>__APP_NAME__</AssemblyName>
+  </PropertyGroup>
+
+</Project>

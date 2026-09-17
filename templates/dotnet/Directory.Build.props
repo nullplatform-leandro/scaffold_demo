@@ -1,0 +1,19 @@
+<Project>
+
+  <!-- Written by the scaffolding, from the application this repository belongs to.
+       Everything here comes out of $APPLICATION and $NRN, which the scaffolding
+       step exports; nothing was typed by hand. -->
+  <PropertyGroup>
+    <NullplatformApplication>__APPLICATION_SLUG__</NullplatformApplication>
+    <NullplatformNamespace>__NAMESPACE_SLUG__</NullplatformNamespace>
+    <NullplatformNrn>__NRN__</NullplatformNrn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
