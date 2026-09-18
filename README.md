@@ -22,7 +22,8 @@ Both scripts perform the same three steps against the repository that
 |---|---|---|
 | 1 | Sets the `nullplatform-application` and `nullplatform-namespace` repository custom properties | Warns, carries on |
 | 2 | Creates a `Development` deployment environment | Warns, carries on |
-| 3 | Renders the template the repository name routes to, commits and pushes | **Fails the workflow** |
+| 3 | Creates the ECR repository the first build will push to | **Fails the workflow** |
+| 4 | Renders the template the repository name routes to, commits and pushes | **Fails the workflow** |
 
 The split is the point. Steps 1 and 2 leave a repository that still builds, so
 they are not worth failing an application creation for. Step 3 does not: an empty
@@ -125,6 +126,31 @@ technology" template and still carries the `Dockerfile` and the CI that came wit
 it, so it builds and deploys untouched. There is no broken tree to protect the
 workflow from.
 
+## The ECR repository
+
+ECR does not create a repository on push the way Docker Hub does, and the
+`docker-server` asset provider only records the URI into the platform. Nothing
+else makes it, so without step 3 the first build of every application pushes at
+something nobody created and fails with *"name unknown: The repository with name
+'...' does not exist"* — in CI, far from the cause.
+
+The name is built the way the ECR asset provider builds it, because it has to
+match what the platform pushes to character for character:
+
+```
+<ECR_REPOSITORY_PATH>/<namespace-slug><separator><application-slug>
+```
+
+with the separator a slash when `ECR_USE_NAMESPACE` is `true` and a hyphen
+otherwise. Both variables carry the names that provider uses, so when it becomes
+usable this step is deleted and `ASSET_REPOSITORY_PROVIDER=ecr` takes over with
+the configuration already in place.
+
+`AWS_REGION` unset means the step does nothing: assets do not live in ECR on every
+installation. The agent's role needs `ecr:CreateRepository` and
+`ecr:DescribeRepositories` — it describes first, so a repository that already
+exists keeps its lifecycle policy and its tags.
+
 ## What the templates are built on
 
 Both templates descend from the nullplatform **"Any technology"** template
@@ -157,6 +183,7 @@ tests/run.sh
 | `test_flavour.sh` | the routing table, against **both** implementations at once, so bash and Python cannot drift apart |
 | `test_names.sh` | the assembly and package names, including the digit that a real .NET repository name puts after its prefix |
 | `test_render.sh` | what lands in the checkout: the two renderers byte for byte, no surviving placeholder, the `Dockerfile` at the root |
+| `test_asset_repository.sh` | the ECR repository name, against both implementations, and the AWS calls against a stubbed `aws` |
 | `test_containers.sh` | builds each image the way the CI would and asks the container what it is, under the names the naming rule really produces. Skipped, not failed, without docker |
 
 None of it touches GitHub or nullplatform. Sourcing `scaffold.sh` stops at a guard

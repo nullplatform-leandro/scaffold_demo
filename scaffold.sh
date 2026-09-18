@@ -14,7 +14,8 @@
 #
 #   1. a repository custom property                -- optional, warns and carries on
 #   2. a deployment environment                    -- optional, warns and carries on
-#   3. the application files, committed and pushed -- the actual scaffolding, fatal
+#   3. the ECR repository the build pushes to      -- fatal
+#   4. the application files, committed and pushed -- the actual scaffolding, fatal
 #
 # Which application files depends on the repository name: net-* gets a .NET
 # skeleton, node-* a Node one. Anything else is left as the "Any technology"
@@ -123,6 +124,53 @@ package_name_for() {
 }
 
 
+# The repository the build will push its image to.
+#
+# Built exactly the way the ECR asset provider builds it --
+# <path>/<namespace><separator><application>, the separator a slash when
+# ECR_USE_NAMESPACE is `true` and a hyphen otherwise -- because it has to match
+# what the platform pushes to character for character. The same two variables
+# name it, so when that provider becomes usable this function and its caller are
+# deleted and nothing else moves.
+asset_repository_name() {
+  local namespace="${1:-$NAMESPACE_SLUG}" application="${2:-$APPLICATION_SLUG}"
+  local path="${3-${ECR_REPOSITORY_PATH:-}}" use_namespace="${4-${ECR_USE_NAMESPACE:-}}"
+  local separator="-" prefix=""
+
+  [[ "$use_namespace" == "true" ]] && separator="/"
+  [[ -n "$path" ]] && prefix="$path/"
+
+  printf '%s%s%s%s' "$prefix" "$namespace" "$separator" "$application"
+}
+
+# ECR does not create a repository on push the way Docker Hub does, and the
+# docker-server asset provider only records the URI, so without this the first
+# build of every application pushes at something nobody made and fails with
+# "name unknown". Describing first rather than creating and ignoring the error
+# keeps a repository that already exists untouched -- its lifecycle policy and its
+# tags are not this script's to reset.
+ensure_asset_repository() {
+  local repository
+
+  # Assets do not live in ECR on every installation, and this has nothing to do
+  # for the ones where they do not.
+  if [[ -z "${AWS_REGION:-}" ]]; then
+    echo "    AWS_REGION is not set, leaving the asset repository alone"
+    return 0
+  fi
+
+  repository=$(asset_repository_name)
+
+  if aws ecr describe-repositories --repository-names "$repository" --region "$AWS_REGION" >/dev/null 2>&1; then
+    echo "    $repository already exists"
+    return 0
+  fi
+
+  echo "    creating $repository"
+  aws ecr create-repository --repository-name "$repository" --region "$AWS_REGION" >/dev/null
+}
+
+
 # --- the main body starts here --------------------------------------------------
 #
 # Sourced rather than executed: hand back the definitions above and stop. That is
@@ -172,7 +220,7 @@ fi
 # repository, so this answers 404 on a personal account and 403 when the property
 # was never defined. Neither breaks the repository, so neither is fatal here.
 
-echo "==> [1/3] setting the 'nullplatform-application' custom property"
+echo "==> [1/4] setting the 'nullplatform-application' custom property"
 
 if gh api --method PATCH "/repos/$REPO/properties/values" \
   --input - <<JSON >/dev/null 2>&1
@@ -198,7 +246,7 @@ fi
 # application-lifecycle-manager creates repositories private. On a Free plan this
 # is a 403: worth reporting, not worth failing for.
 
-echo "==> [2/3] creating the 'Development' environment"
+echo "==> [2/4] creating the 'Development' environment"
 
 if gh api --method PUT "/repos/$REPO/environments/Development" >/dev/null 2>&1; then
   echo "    created"
@@ -209,7 +257,18 @@ else
 fi
 
 
-# 3. The application files ---------------------------------------------------------
+# 3. The ECR repository -----------------------------------------------------------
+#
+# Before the files, because pushing them is what starts the first build, and that
+# build pushes an image at this repository. Fatal: ECR answers "name unknown" and
+# the failure surfaces in CI, far from the cause.
+
+echo "==> [3/4] making sure the asset repository exists"
+
+ensure_asset_repository
+
+
+# 4. The application files ---------------------------------------------------------
 #
 # This one is fatal. A repository whose first build runs against an empty tree is
 # worse than an application that was not created: the error would surface in CI,
@@ -220,7 +279,7 @@ fi
 # Dockerfile and the CI that came with it, so it builds and deploys untouched.
 
 if [[ -z "$FLAVOUR" ]]; then
-  echo "==> [3/3] no technology matched '$REPOSITORY_NAME'"
+  echo "==> [4/4] no technology matched '$REPOSITORY_NAME'"
   echo "    Names route by prefix: net-* gets .NET, node-* gets Node."
   echo "    Leaving the repository as the 'Any technology' template made it."
   echo "==> scaffolding done"
@@ -229,7 +288,7 @@ fi
 
 TEMPLATE="$TEMPLATES/$TEMPLATE_DIR"
 
-echo "==> [3/3] pushing the $FLAVOUR skeleton"
+echo "==> [4/4] pushing the $FLAVOUR skeleton"
 
 # GitHub copies a template's content asynchronously: create_repository returns as
 # soon as the repository exists, and for a few seconds after that it has no

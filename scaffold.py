@@ -20,7 +20,8 @@ Three things, in the order a real one would do them:
 
     1. a repository custom property                -- optional, warns and carries on
     2. a deployment environment                    -- optional, warns and carries on
-    3. the application files, committed and pushed -- the actual scaffolding, fatal
+    3. the ECR repository the build pushes to      -- fatal
+    4. the application files, committed and pushed -- the actual scaffolding, fatal
 
 Which application files depends on the repository name: net-* gets a .NET
 skeleton, node-* a Node one. Anything else is left as the "Any technology"
@@ -163,6 +164,67 @@ def flavour_for(name: str) -> tuple[str, str, str] | None:
     return None
 
 
+def asset_repository_name(
+    namespace_slug: str,
+    application_slug: str,
+    path: str,
+    use_namespace: str,
+) -> str:
+    """The repository the build will push its image to.
+
+    Built exactly the way the ECR asset provider builds it --
+    <path>/<namespace><separator><application>, the separator a slash when
+    `use_namespace` is "true" and a hyphen otherwise -- because it has to match
+    what the platform pushes to character for character. The same two variables
+    name it, so when that provider becomes usable this function and its caller
+    are deleted and nothing else moves.
+    """
+    separator = "/" if use_namespace == "true" else "-"
+    prefix = f"{path}/" if path else ""
+
+    return f"{prefix}{namespace_slug}{separator}{application_slug}"
+
+
+def ensure_asset_repository(namespace_slug: str, application_slug: str) -> None:
+    """Create the ECR repository the build will push to, unless it is already there.
+
+    ECR does not create one on push the way Docker Hub does, and the
+    docker-server asset provider only records the URI, so without this the first
+    build of every application pushes at something nobody made and fails with
+    "name unknown". Describing first rather than creating and ignoring the error
+    keeps a repository that already exists untouched -- its lifecycle policy and
+    its tags are not this script's to reset.
+    """
+    region = os.environ.get("AWS_REGION")
+
+    # Assets do not live in ECR on every installation, and this has nothing to do
+    # for the ones where they do not.
+    if not region:
+        print("    AWS_REGION is not set, leaving the asset repository alone")
+        return
+
+    repository = asset_repository_name(
+        namespace_slug,
+        application_slug,
+        os.environ.get("ECR_REPOSITORY_PATH", ""),
+        os.environ.get("ECR_USE_NAMESPACE", ""),
+    )
+
+    described = subprocess.run(
+        ["aws", "ecr", "describe-repositories", "--repository-names", repository,
+         "--region", region],
+        capture_output=True, text=True,
+    )
+
+    if described.returncode == 0:
+        print(f"    {repository} already exists")
+        return
+
+    print(f"    creating {repository}")
+    run("aws", "ecr", "create-repository", "--repository-name", repository,
+        "--region", region)
+
+
 def render_template(
     template: Path,
     destination_root: Path,
@@ -242,7 +304,7 @@ def main() -> None:
     # repository, so this answers 404 on a personal account and 403 when the property
     # was never defined. Neither breaks the repository, so neither is fatal.
 
-    print("==> [1/3] setting the 'nullplatform-application' custom property")
+    print("==> [1/4] setting the 'nullplatform-application' custom property")
 
     ok, detail = github(GH_TOKEN, "PATCH", f"/repos/{REPO}/properties/values", {
         "properties": [
@@ -266,7 +328,7 @@ def main() -> None:
     # application-lifecycle-manager creates repositories private. On a Free plan this
     # is a 403: worth reporting, not worth failing for.
 
-    print("==> [2/3] creating the 'Development' environment")
+    print("==> [2/4] creating the 'Development' environment")
 
     ok, detail = github(GH_TOKEN, "PUT", f"/repos/{REPO}/environments/Development")
 
@@ -278,7 +340,21 @@ def main() -> None:
         print("             Carrying on.")
 
 
-    # 3. The application files --------------------------------------------------------
+    # 3. The ECR repository ------------------------------------------------------------
+    #
+    # Before the files, because pushing them is what starts the first build, and
+    # that build pushes an image at this repository. Fatal: ECR answers "name
+    # unknown" and the failure surfaces in CI, far from the cause.
+
+    print("==> [3/4] making sure the asset repository exists")
+
+    ensure_asset_repository(
+        SUBSTITUTIONS["__NAMESPACE_SLUG__"],
+        SUBSTITUTIONS["__APPLICATION_SLUG__"],
+    )
+
+
+    # 4. The application files --------------------------------------------------------
     #
     # This one is fatal. A repository whose first build runs against an empty tree is
     # worse than an application that was not created: the error would surface in CI,
@@ -289,7 +365,7 @@ def main() -> None:
     # Dockerfile and the CI that came with it, so it builds and deploys untouched.
 
     if not flavour:
-        print(f"==> [3/3] no technology matched '{REPOSITORY_NAME}'")
+        print(f"==> [4/4] no technology matched '{REPOSITORY_NAME}'")
         print("    Names route by prefix: net-* gets .NET, node-* gets Node.")
         print("    Leaving the repository as the 'Any technology' template made it.")
         print("==> scaffolding done")
@@ -297,7 +373,7 @@ def main() -> None:
 
     template = TEMPLATES / template_dir
 
-    print(f"==> [3/3] pushing the {flavour} skeleton")
+    print(f"==> [4/4] pushing the {flavour} skeleton")
 
     # GitHub copies a template's content asynchronously: create_repository returns as
     # soon as the repository exists, and for a few seconds after that it has no
