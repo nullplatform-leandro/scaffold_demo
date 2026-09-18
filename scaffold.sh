@@ -89,6 +89,40 @@ render_template() {
 }
 
 
+# my-payments-api -> MyPaymentsApi, for the namespace and the assembly. The kind
+# of substitution a template cannot do for itself: it depends on a name that only
+# exists once the application is being created.
+#
+# $1 is the repository name, $2 the part left after the routing prefix. Normally
+# the prefix is dropped -- it routed the repository here and has no business in
+# the name of the thing being built. The exception is a remainder that starts with
+# a DIGIT, which C# refuses as an identifier: the agent's REPOSITORY_NAME_RULE
+# builds .NET names as {architecture}-{dotnet_version}-..., so `net-8-billing`
+# would leave `8Billing`. There the prefix stays, and the assembly is Net8Billing.
+app_name_for() {
+  local repository_name="$1" base_name="$2" candidate
+
+  candidate=$(pascal_case "$base_name")
+
+  case "$candidate" in
+    [0-9]*) pascal_case "$repository_name" ;;
+    *)      printf '%s' "$candidate" ;;
+  esac
+}
+
+pascal_case() {
+  printf '%s' "$1" \
+    | tr '_' '-' \
+    | awk -F- '{for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2)}'
+}
+
+# npm rejects a package name with a capital in it, so Node gets the flat spelling.
+# A leading digit is fine here -- npm allows it where C# does not.
+package_name_for() {
+  printf '%s' "$1" | tr '_' '-' | tr '[:upper:]' '[:lower:]'
+}
+
+
 # --- the main body starts here --------------------------------------------------
 #
 # Sourced rather than executed: hand back the definitions above and stop. That is
@@ -116,17 +150,8 @@ else
   BASE_NAME="$REPOSITORY_NAME"
 fi
 
-# net-my-payments-api -> MyPaymentsApi, for the namespace and the assembly. The
-# prefix is dropped: it routed the repository here and has no business in the name
-# of the thing being built. This is the kind of substitution a template cannot do
-# for itself -- it depends on a name that only exists once the application is
-# being created.
-APP_NAME=$(printf '%s' "$BASE_NAME" \
-  | tr '_' '-' \
-  | awk -F- '{for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2)}')
-
-# npm rejects a package name with a capital in it, so Node gets the flat spelling.
-PACKAGE_NAME=$(printf '%s' "$BASE_NAME" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+APP_NAME=$(app_name_for "$REPOSITORY_NAME" "$BASE_NAME")
+PACKAGE_NAME=$(package_name_for "$BASE_NAME")
 
 echo "==> scaffolding $REPO as $APP_NAME"
 echo "    technology  : ${FLAVOUR:-<no prefix matched>}"
@@ -173,9 +198,9 @@ fi
 # application-lifecycle-manager creates repositories private. On a Free plan this
 # is a 403: worth reporting, not worth failing for.
 
-echo "==> [2/3] creating the 'development' environment"
+echo "==> [2/3] creating the 'Development' environment"
 
-if gh api --method PUT "/repos/$REPO/environments/development" >/dev/null 2>&1; then
+if gh api --method PUT "/repos/$REPO/environments/Development" >/dev/null 2>&1; then
   echo "    created"
 else
   echo "    WARNING: could not create the environment."

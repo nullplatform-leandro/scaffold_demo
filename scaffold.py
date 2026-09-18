@@ -117,6 +117,30 @@ def pascal_case(name: str) -> str:
     return "".join(part[:1].upper() + part[1:] for part in re.split(r"[-_]+", name) if part)
 
 
+def app_name_for(repository_name: str, base_name: str) -> str:
+    """The namespace and the assembly, from the name left after the routing prefix.
+
+    The prefix is normally dropped -- it routed the repository here and has no
+    business in the name of the thing being built. The exception is a remainder
+    that starts with a DIGIT, which C# refuses as an identifier: the agent's
+    REPOSITORY_NAME_RULE builds .NET names as
+    {architecture}-{dotnet_version}-..., so `net-8-billing` would leave
+    `8Billing`. There the prefix stays, and the assembly is Net8Billing.
+    """
+    candidate = pascal_case(base_name)
+
+    if candidate[:1].isdigit():
+        return pascal_case(repository_name)
+
+    return candidate
+
+
+def package_name_for(base_name: str) -> str:
+    """npm rejects a package name with a capital in it, so Node gets the flat
+    spelling. A leading digit is fine here -- npm allows it where C# does not."""
+    return base_name.replace("_", "-").lower()
+
+
 def flavour_for(name: str) -> tuple[str, str, str] | None:
     """Route a repository name to (flavour, template directory, name without the
     prefix), or None for a name that matches nothing.
@@ -190,12 +214,8 @@ def main() -> None:
     routed = flavour_for(REPOSITORY_NAME)
     flavour, template_dir, base_name = routed or ("", "", REPOSITORY_NAME)
 
-    # The prefix routed the repository here and has no business in the name of the
-    # thing being built, so both spellings come off what it left behind.
-    APP_NAME = pascal_case(base_name)
-
-    # npm rejects a package name with a capital in it, so Node gets the flat one.
-    PACKAGE_NAME = base_name.replace("_", "-").lower()
+    APP_NAME = app_name_for(REPOSITORY_NAME, base_name)
+    PACKAGE_NAME = package_name_for(base_name)
 
     SUBSTITUTIONS = {
         "__APP_NAME__": APP_NAME,
@@ -246,9 +266,9 @@ def main() -> None:
     # application-lifecycle-manager creates repositories private. On a Free plan this
     # is a 403: worth reporting, not worth failing for.
 
-    print("==> [2/3] creating the 'development' environment")
+    print("==> [2/3] creating the 'Development' environment")
 
-    ok, detail = github(GH_TOKEN, "PUT", f"/repos/{REPO}/environments/development")
+    ok, detail = github(GH_TOKEN, "PUT", f"/repos/{REPO}/environments/Development")
 
     if ok:
         print("    created")

@@ -21,7 +21,7 @@ Both scripts perform the same three steps against the repository that
 | Step | What | On failure |
 |---|---|---|
 | 1 | Sets the `nullplatform-application` and `nullplatform-namespace` repository custom properties | Warns, carries on |
-| 2 | Creates a `development` deployment environment | Warns, carries on |
+| 2 | Creates a `Development` deployment environment | Warns, carries on |
 | 3 | Renders the template the repository name routes to, commits and pushes | **Fails the workflow** |
 
 The split is the point. Steps 1 and 2 leave a repository that still builds, so
@@ -39,33 +39,53 @@ Steps 1 and 2 will often warn in a test environment, and that is expected:
 
 ## Wiring it to the agent
 
-The path is read on the agent host, so the files have to be there — cloned onto
-the host, baked into the agent image, or mounted. Nothing fetches them.
+`scripts/code-repo/scaffold_repository` in `application-lifecycle-manager` is an
+extension point that ships doing nothing:
 
-```yaml
-# Bash. The file needs no execute bit: a non-executable script runs under bash.
-extra_envs:
-  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.sh
-
-# Python, interpreter named outright. Also needs no execute bit, which is what
-# makes this the convenient form for a file mounted from a ConfigMap.
-extra_envs:
-  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.py
-  TRIGGER_SCAFFOLD_INTERPRETER: python3
-
-# Python, through its own shebang. Requires chmod +x.
-extra_envs:
-  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.py
-
-# Under mise, for a toolchain the agent image does not carry.
-extra_envs:
-  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.sh
-  TRIGGER_SCAFFOLD_INTERPRETER: mise exec --
+```bash
+echo "scaffold_repository: no scaffolding configured"
+return 0
 ```
 
-The path must be absolute. A relative one is refused with a message saying so,
-because it would otherwise resolve against `application-lifecycle-manager`'s own
-directory.
+**Wiring this in means replacing that body.** There is no environment variable
+that points at a script. `TRIGGER_SCAFFOLD_SCRIPT` is read by no branch and no tag
+of `application-lifecycle-manager`, and neither are `TRIGGER_SCAFFOLD_INTERPRETER`,
+`TRIGGER_SCAFFOLD_TIMEOUT` or `SCAFFOLD_WORKDIR`. Setting it on the agent is
+silent: the step prints its "no scaffolding configured" line and the workflow
+carries on.
+
+The file is **sourced** into the workflow's shared shell, so `exit 0` inside it
+ends that shell and silently skips every step after it. Run the orchestrator as a
+subprocess, and hand it the empty working directory it expects:
+
+```bash
+SCAFFOLD_WORKDIR=$(mktemp -d)
+export SCAFFOLD_WORKDIR
+
+if ! ( cd "$SCAFFOLD_WORKDIR" && /root/.np/nullplatform-leandro/scaffold_demo/scaffold.sh ); then
+  rm -rf "$SCAFFOLD_WORKDIR"
+  exit 1          # stops the workflow -- never `exit 0`
+fi
+
+rm -rf "$SCAFFOLD_WORKDIR"
+return 0
+```
+
+Swap `scaffold.sh` for `scaffold.py` to run the Python half; it takes the same
+environment and needs no interpreter named for it, given the shebang and the
+execute bit.
+
+The files are read on the agent host, so they have to be there — nothing fetches
+them. `agent_repo` is what puts this repository at `/root/.np/<owner>/<repo>/`:
+
+```hcl
+agent_repo = [
+  "https://github.com/nullplatform-leandro/scaffold_demo#main",
+]
+```
+
+A failed clone there does not bring the agent down, so a missing path shows up
+only as this step failing to find the script.
 
 ## What the environment provides
 
@@ -80,8 +100,12 @@ here:
 | `APPLICATION` | The full application document — where a real orchestrator reads its metadata |
 | `SCAFFOLD_WORKDIR` | The working directory, empty on entry and removed afterwards |
 
-The clone happens in the working directory the step hands over, so the token that
-lands in `.git/config` goes away with it.
+`SCAFFOLD_WORKDIR` is the one the step does **not** export — the snippet above
+makes it. Everything else comes from `scripts/base_context` and the GitHub
+`build_context`, both of which have already run by the time this is reached.
+
+The clone happens in that working directory, so the token that lands in
+`.git/config` goes away with it.
 
 ## Routing by technology
 
@@ -89,14 +113,25 @@ The repository name decides what gets scaffolded:
 
 | Repository | Technology | Template |
 |---|---|---|
-| `net-payments-api` | .NET | `templates/dotnet/` |
-| `node-payments-api` | Node | `templates/node/` |
+| `net-8-vt7-fire-issuance-test-2` | .NET | `templates/dotnet/` |
+| `node-frontend-fire-issuance-test-3` | Node | `templates/node/` |
 | anything else | — | nothing is written |
 
-The prefix is dropped before the name is used again, so `net-payments-api` builds
-an assembly called `PaymentsApi` and `node-payments-api` a package called
-`payments-api`: the prefix routed the repository here and has no business in the
-name of the thing being built. Underscores count as the same separator as hyphens
+Those are not invented examples. The agent builds repository names from
+application metadata through `REPOSITORY_NAME_RULE`, whose patterns start with
+`{.application.metadata.application.architecture}` — `.NET` or `Node`. The prefix
+this routes on is that field, lowercased and stripped of its dot.
+
+The prefix is dropped before the name is used again: it routed the repository
+here and has no business in the name of the thing being built. So
+`node-frontend-fire-issuance-test-3` becomes the package `frontend-fire-issuance-test-3`.
+
+The .NET side has one exception, and it is not cosmetic. That naming pattern is
+`{architecture}-{dotnet_version}-...`, so the prefix is followed by a **digit** —
+dropping it would leave `8Vt7FireIssuanceTest2`, which C# refuses as an
+identifier and which fails at `dotnet publish`, inside the first build. When the
+remainder starts with a digit the prefix stays, and the assembly is
+`Net8Vt7FireIssuanceTest2`. Underscores count as the same separator as hyphens
 and case is ignored, so `NET_Payments_API` lands in the same place. The prefix ends
 in a separator on purpose — `netflix-clone` is not a .NET repository.
 
@@ -136,8 +171,9 @@ tests/run.sh
 | | |
 |---|---|
 | `test_flavour.sh` | the routing table, against **both** implementations at once, so bash and Python cannot drift apart |
+| `test_names.sh` | the assembly and package names, including the digit that a real .NET repository name puts after its prefix |
 | `test_render.sh` | what lands in the checkout: the two renderers byte for byte, no surviving placeholder, the `Dockerfile` at the root |
-| `test_containers.sh` | builds each image the way the CI would and asks the container what it is. Skipped, not failed, without docker |
+| `test_containers.sh` | builds each image the way the CI would and asks the container what it is, under the names the naming rule really produces. Skipped, not failed, without docker |
 
 None of it touches GitHub or nullplatform. Sourcing `scaffold.sh` stops at a guard
 before its main body, and `scaffold.py` is imported rather than run.

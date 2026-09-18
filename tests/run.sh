@@ -16,7 +16,7 @@ bash -n "$ROOT/scaffold.sh" && echo "  ok   scaffold.sh" || status=1
 python3 -m py_compile "$ROOT/scaffold.py" && echo "  ok   scaffold.py" || status=1
 echo
 
-for test in test_flavour.sh test_render.sh test_containers.sh; do
+for test in test_flavour.sh test_names.sh test_render.sh test_containers.sh; do
   echo "### $test"
   "$HERE/$test" || status=1
   echo

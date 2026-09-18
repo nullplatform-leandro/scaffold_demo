@@ -82,14 +82,13 @@ module.render_template(Path(sys.argv[2]), Path(sys.argv[3]), {
 PY
 }
 
-for name in net-payments-api node-payments-api; do
+for name in net-8-vt7-fire-issuance-test-2 node-frontend-fire-issuance-test-3; do
   routed=$(flavour_for "$name")
   IFS=$'\t' read -r flavour template_dir base_name <<<"$routed"
 
   REPOSITORY_NAME="$name"
-  APP_NAME=$(printf '%s' "$base_name" | tr '_' '-' \
-    | awk -F- '{for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2)}')
-  PACKAGE_NAME=$(printf '%s' "$base_name" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+  APP_NAME=$(app_name_for "$name" "$base_name")
+  PACKAGE_NAME=$(package_name_for "$base_name")
 
   echo "==> $name ($flavour)"
 
@@ -119,16 +118,16 @@ done
 
 echo "==> .NET specifics"
 check ".csproj renamed after the assembly" "yes" \
-  "$([[ -f "$WORK/net-payments-api-bash/src/PaymentsApi/PaymentsApi.csproj" ]] && echo yes || echo no)"
+  "$([[ -f "$WORK/net-8-vt7-fire-issuance-test-2-bash/src/Net8Vt7FireIssuanceTest2/Net8Vt7FireIssuanceTest2.csproj" ]] && echo yes || echo no)"
 check_contains "the greeting names .NET" \
-  "$WORK/net-payments-api-bash/src/PaymentsApi/Program.cs" \
+  "$WORK/net-8-vt7-fire-issuance-test-2-bash/src/Net8Vt7FireIssuanceTest2/Program.cs" \
   'hello world. I am an app built in .NET'
 
 echo "==> Node specifics"
 check_contains "package name is npm-legal" \
-  "$WORK/node-payments-api-bash/package.json" '"name": "payments-api"'
+  "$WORK/node-frontend-fire-issuance-test-3-bash/package.json" '"name": "frontend-fire-issuance-test-3"'
 check_contains "the greeting names Node" \
-  "$WORK/node-payments-api-bash/src/server.js" \
+  "$WORK/node-frontend-fire-issuance-test-3-bash/src/server.js" \
   'hello world. I am an app built in Node'
 
 echo

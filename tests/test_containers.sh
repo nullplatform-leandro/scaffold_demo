@@ -65,9 +65,8 @@ run_flavour() {
   IFS=$'\t' read -r flavour template_dir base_name <<<"$routed"
 
   REPOSITORY_NAME="$name"
-  APP_NAME=$(printf '%s' "$base_name" | tr '_' '-' \
-    | awk -F- '{for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2)}')
-  PACKAGE_NAME=$(printf '%s' "$base_name" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+  APP_NAME=$(app_name_for "$name" "$base_name")
+  PACKAGE_NAME=$(package_name_for "$base_name")
 
   echo "==> $name ($flavour)"
 
@@ -108,8 +107,10 @@ run_flavour() {
   docker rmi --force "$image" >/dev/null 2>&1
 }
 
-run_flavour net-payments-api "hello world. I am an app built in .NET"
-run_flavour node-payments-api "hello world. I am an app built in Node"
+# The names the agent's REPOSITORY_NAME_RULE actually produces, so the .NET one
+# exercises the digit that follows its prefix all the way through `dotnet publish`.
+run_flavour net-8-vt7-fire-issuance-test-2 "hello world. I am an app built in .NET"
+run_flavour node-frontend-fire-issuance-test-3 "hello world. I am an app built in Node"
 
 echo
 if (( failures )); then
