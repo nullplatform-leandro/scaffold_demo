@@ -39,53 +39,33 @@ Steps 1 and 2 will often warn in a test environment, and that is expected:
 
 ## Wiring it to the agent
 
-`scripts/code-repo/scaffold_repository` in `application-lifecycle-manager` is an
-extension point that ships doing nothing:
+The path is read on the agent host, so the files have to be there — cloned onto
+the host, baked into the agent image, or mounted. Nothing fetches them.
 
-```bash
-echo "scaffold_repository: no scaffolding configured"
-return 0
+```yaml
+# Bash. The file needs no execute bit: a non-executable script runs under bash.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.sh
+
+# Python, interpreter named outright. Also needs no execute bit, which is what
+# makes this the convenient form for a file mounted from a ConfigMap.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.py
+  TRIGGER_SCAFFOLD_INTERPRETER: python3
+
+# Python, through its own shebang. Requires chmod +x.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.py
+
+# Under mise, for a toolchain the agent image does not carry.
+extra_envs:
+  TRIGGER_SCAFFOLD_SCRIPT: /opt/scaffold_demo/scaffold.sh
+  TRIGGER_SCAFFOLD_INTERPRETER: mise exec --
 ```
 
-**Wiring this in means replacing that body.** There is no environment variable
-that points at a script. `TRIGGER_SCAFFOLD_SCRIPT` is read by no branch and no tag
-of `application-lifecycle-manager`, and neither are `TRIGGER_SCAFFOLD_INTERPRETER`,
-`TRIGGER_SCAFFOLD_TIMEOUT` or `SCAFFOLD_WORKDIR`. Setting it on the agent is
-silent: the step prints its "no scaffolding configured" line and the workflow
-carries on.
-
-The file is **sourced** into the workflow's shared shell, so `exit 0` inside it
-ends that shell and silently skips every step after it. Run the orchestrator as a
-subprocess, and hand it the empty working directory it expects:
-
-```bash
-SCAFFOLD_WORKDIR=$(mktemp -d)
-export SCAFFOLD_WORKDIR
-
-if ! ( cd "$SCAFFOLD_WORKDIR" && /root/.np/nullplatform-leandro/scaffold_demo/scaffold.sh ); then
-  rm -rf "$SCAFFOLD_WORKDIR"
-  exit 1          # stops the workflow -- never `exit 0`
-fi
-
-rm -rf "$SCAFFOLD_WORKDIR"
-return 0
-```
-
-Swap `scaffold.sh` for `scaffold.py` to run the Python half; it takes the same
-environment and needs no interpreter named for it, given the shebang and the
-execute bit.
-
-The files are read on the agent host, so they have to be there — nothing fetches
-them. `agent_repo` is what puts this repository at `/root/.np/<owner>/<repo>/`:
-
-```hcl
-agent_repo = [
-  "https://github.com/nullplatform-leandro/scaffold_demo#main",
-]
-```
-
-A failed clone there does not bring the agent down, so a missing path shows up
-only as this step failing to find the script.
+The path must be absolute. A relative one is refused with a message saying so,
+because it would otherwise resolve against `application-lifecycle-manager`'s own
+directory.
 
 ## What the environment provides
 
@@ -100,12 +80,16 @@ here:
 | `APPLICATION` | The full application document — where a real orchestrator reads its metadata |
 | `SCAFFOLD_WORKDIR` | The working directory, empty on entry and removed afterwards |
 
-`SCAFFOLD_WORKDIR` is the one the step does **not** export — the snippet above
-makes it. Everything else comes from `scripts/base_context` and the GitHub
-`build_context`, both of which have already run by the time this is reached.
+The clone happens in the working directory the step hands over, so the token that
+lands in `.git/config` goes away with it.
 
-The clone happens in that working directory, so the token that lands in
-`.git/config` goes away with it.
+The step that provides all of this is `scripts/code-repo/scaffold_repository`, and
+it only exists on
+`nullplatform-leandro/application-lifecycle-manager#feat/scaffold-from-external-script`.
+On the upstream `nullplatform/application-lifecycle-manager` that file is still
+the extension point's empty slot, which reads no `TRIGGER_SCAFFOLD_*` variable at
+all: pointed there, the agent prints "no scaffolding configured" and carries on,
+and nothing in this repository ever runs.
 
 ## Routing by technology
 
