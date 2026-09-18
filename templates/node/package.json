@@ -1,0 +1,19 @@
+{
+  "name": "__PACKAGE_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scaffolded for the nullplatform application __APPLICATION_SLUG__.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "nullplatform": {
+    "application": "__APPLICATION_SLUG__",
+    "namespace": "__NAMESPACE_SLUG__",
+    "nrn": "__NRN__"
+  }
+}
